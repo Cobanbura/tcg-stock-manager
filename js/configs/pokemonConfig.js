@@ -4,6 +4,7 @@
         "Regular": "finish:regular",
         "Reverse Holo": "finish:reverse-holo",
         "Holo": "finish:holo",
-        "First Edition": "finish:first-edition"
+        "First Edition": "finish:first-edition",
+        "Pokeball": "finish:pokeball"
     }
 };
