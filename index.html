@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TCG Stock Manager - Fast Input</title>
+    <title>TCG Stock Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-6">
@@ -12,11 +12,10 @@
     <header class="border-b border-slate-700 pb-4 flex justify-between items-center">
         <div>
             <h1 class="text-2xl font-bold text-indigo-400">TCG Stock Manager</h1>
-            <p class="text-xs text-slate-400">Seri Stok Giriş Motoru</p>
+            <p class="text-xs text-slate-400">Stok Giriş Paneli</p>
         </div>
         <div>
             <select id="game-select" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-3 py-1 text-sm">
-                <option value="pokemon" selected>Pokémon TCG</option>
             </select>
         </div>
     </header>
@@ -36,22 +35,22 @@
     </section>
 
     <section id="entry-console" class="bg-slate-800 p-6 rounded-lg border border-slate-700 space-y-4 opacity-50 pointer-events-none transition-opacity duration-300">
-        <h2 class="text-lg font-semibold text-indigo-300 border-b border-slate-700 pb-2">⚡ Seri Stok Giriş Konsolu</h2>
+        <h2 class="text-lg font-semibold text-indigo-300 border-b border-slate-700 pb-2">Stok Giriş Konsolu</h2>
 
         <div class="grid grid-cols-3 gap-4">
             <div>
                 <label class="block text-xs font-semibold text-slate-400 mb-1">1. KART NO</label>
-                <input type="text" id="input-card-num" placeholder="Örn: 003" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+                <input type="text" id="input-card-num" placeholder="Arama yapın..." class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
             </div>
 
-            <div>
-                <label class="block text-xs font-semibold text-slate-400 mb-1">2. FINISH (BASKI)</label>
+            <div id="finish-wrapper">
+                <label class="block text-xs font-semibold text-slate-400 mb-1">2. FINISH</label>
                 <select id="select-finish" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
                 </select>
             </div>
 
-            <div>
-                <label class="block text-xs font-semibold text-slate-400 mb-1">3. ADET (STOCK)</label>
+            <div id="qty-wrapper">
+                <label class="block text-xs font-semibold text-slate-400 mb-1" id="qty-label">3. ADET</label>
                 <input type="number" id="input-qty" min="1" value="1" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
             </div>
         </div>
@@ -68,7 +67,7 @@
     </section>
 
     <section class="flex justify-between items-center bg-slate-800 p-4 rounded-lg border border-slate-700">
-        <span id="updated-count" class="text-xs font-mono text-slate-400">Güncellenen Kart Sayısı: 0</span>
+        <span id="updated-count" class="text-xs font-mono text-slate-400">Giriş Yapılan Kart Sayısı: 0</span>
         <button id="btn-export" disabled class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded text-sm disabled:opacity-50 transition">
             Güncellenmiş CSV'yi İndir
         </button>
@@ -77,22 +76,34 @@
 </div>
 
 <script src="./js/configs/pokemonConfig.js"></script>
+<script src="./js/configs/onePieceConfig.js"></script>
+<script src="./js/configs/riftboundConfig.js"></script>
 <script src="./js/coreEditor.js"></script>
 
 <script>
+    const GAME_CONFIGS = {
+        pokemon: pokemonConfig,
+        onepiece: onePieceConfig,
+        riftbound: riftboundConfig
+    };
+
     let editor = null;
     let updatedCounter = 0;
+    let currentConfig = GAME_CONFIGS.pokemon;
 
     window.addEventListener('dragover', e => e.preventDefault());
     window.addEventListener('drop', e => e.preventDefault());
 
     document.addEventListener('DOMContentLoaded', () => {
+        const gameSelect = document.getElementById('game-select');
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('csv-file');
         const fileNameDisplay = document.getElementById('file-name-display');
         const entryConsole = document.getElementById('entry-console');
         const cardNumInput = document.getElementById('input-card-num');
         const finishSelect = document.getElementById('select-finish');
+        const finishWrapper = document.getElementById('finish-wrapper');
+        const qtyLabel = document.getElementById('qty-label');
         const qtyInput = document.getElementById('input-qty');
         const previewTitle = document.getElementById('preview-title');
         const previewSku = document.getElementById('preview-sku');
@@ -100,19 +111,43 @@
         const exportBtn = document.getElementById('btn-export');
         const updatedCountText = document.getElementById('updated-count');
 
-        function populateFinishes() {
-            finishSelect.innerHTML = "";
-            if (typeof pokemonConfig !== 'undefined' && pokemonConfig.finishes) {
-                Object.keys(pokemonConfig.finishes).forEach(finishName => {
+        function initGameSelect() {
+            gameSelect.innerHTML = "";
+            Object.keys(GAME_CONFIGS).forEach(key => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = GAME_CONFIGS[key].gameName;
+                gameSelect.appendChild(opt);
+            });
+            gameSelect.value = "pokemon";
+            updateGameMode();
+        }
+
+        function updateGameMode() {
+            const selectedKey = gameSelect.value;
+            currentConfig = GAME_CONFIGS[selectedKey] || GAME_CONFIGS.pokemon;
+            
+            if (currentConfig.hasFinishes) {
+                finishWrapper.style.display = "block";
+                qtyLabel.textContent = "3. ADET";
+                finishSelect.innerHTML = "";
+                currentConfig.finishes.forEach(finishName => {
                     const option = document.createElement('option');
                     option.value = finishName;
                     option.textContent = finishName;
                     finishSelect.appendChild(option);
                 });
+            } else {
+                finishWrapper.style.display = "none";
+                qtyLabel.textContent = "2. ADET";
+            }
+
+            if (editor) {
+                editor.config = currentConfig;
             }
         }
 
-        populateFinishes();
+        gameSelect.addEventListener('change', updateGameMode);
 
         dropZone.addEventListener('click', () => fileInput.click());
 
@@ -155,7 +190,7 @@
             reader.onload = function(evt) {
                 try {
                     const content = evt.target.result;
-                    editor = new TCGStockEditor(content, pokemonConfig);
+                    editor = new TCGStockEditor(content, currentConfig);
                     
                     entryConsole.classList.remove('opacity-50', 'pointer-events-none');
                     entryConsole.classList.add('opacity-100');
@@ -163,8 +198,8 @@
                     
                     setTimeout(() => cardNumInput.focus(), 100);
                 } catch (err) {
-                    console.error("CSV Okuma Hatası:", err);
-                    alert("CSV okunurken hata oluştu. Konsolu kontrol edin.");
+                    console.error(err);
+                    alert("CSV okuma hatası oluştu.");
                 }
             };
             reader.readAsText(file);
@@ -198,7 +233,7 @@
             if (!editor) return;
 
             const cardNum = cardNumInput.value.trim();
-            const finish = finishSelect.value;
+            const finish = currentConfig.hasFinishes ? finishSelect.value : null;
             const qty = parseInt(qtyInput.value || "1", 10);
 
             const results = editor.findCardByNumber(cardNum);
@@ -207,7 +242,7 @@
                 editor.updateCardAtIndex(idx, finish, qty);
                 
                 updatedCounter++;
-                updatedCountText.innerText = `Güncellenen Kart Sayısı: ${updatedCounter}`;
+                updatedCountText.innerText = `Giriş Yapılan Kart Sayısı: ${updatedCounter}`;
 
                 cardNumInput.value = "";
                 qtyInput.value = "1";
@@ -215,7 +250,7 @@
                 previewSku.innerText = "-";
                 cardNumInput.focus();
             } else {
-                alert("Girdiğiniz numaraya ait kart bulunamadı.");
+                alert("Girdiğiniz arama metnine uygun kart bulunamadı.");
             }
         }
 
@@ -227,10 +262,12 @@
             
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'shopify_tcg_stock_updated.csv';
+            a.download = `${currentConfig.id}_stock_entries.csv`;
             a.click();
             URL.revokeObjectURL(url);
         });
+
+        initGameSelect();
     });
 </script>
 </body>

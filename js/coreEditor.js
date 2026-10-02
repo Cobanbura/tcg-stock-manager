@@ -1,9 +1,11 @@
 class TCGStockEditor {
-    constructor(csvText, config) {
-        this.config = config;
+    constructor(csvText, gameConfig) {
+        this.config = gameConfig;
         this.rows = [];
+        this.updatedRows = [];
         this.headers = [];
-        this.maxProcessedNum = 0;
+        this.metafieldColumn = "Metafield: custom.yuzey [single_line_text_field]";
+        
         this.parseCSV(csvText);
     }
 
@@ -12,13 +14,17 @@ class TCGStockEditor {
         if (lines.length === 0) return;
         
         this.headers = this.parseCSVLine(lines[0]);
+
+        if (this.config.hasFinishes && !this.headers.includes(this.metafieldColumn)) {
+            this.headers.push(this.metafieldColumn);
+        }
         
         for (let i = 1; i < lines.length; i++) {
             const values = this.parseCSVLine(lines[i]);
-            if (values.length === this.headers.length) {
+            if (values.length > 0) {
                 let rowObj = {};
                 this.headers.forEach((header, index) => {
-                    rowObj[header] = values[index];
+                    rowObj[header] = values[index] !== undefined ? values[index] : "";
                 });
                 this.rows.push(rowObj);
             }
@@ -47,26 +53,15 @@ class TCGStockEditor {
         return values;
     }
 
-    extractCardNumber(row) {
-        const sku = row["Variant SKU"] || "";
-        const title = row["Title"] || "";
-        
-        const skuMatch = sku.match(/-(\d+)-/);
-        const titleMatch = title.match(/\((\d+)\)/);
-
-        if (skuMatch) return parseInt(skuMatch[1], 10);
-        if (titleMatch) return parseInt(titleMatch[1], 10);
-        return 0;
-    }
-
     findCardByNumber(cardNumber) {
         const results = [];
-        const searchNum = cardNumber.toString().padStart(3, '0');
+        const query = cardNumber.toString().trim().toLowerCase();
         
         this.rows.forEach((row, index) => {
-            const sku = row["Variant SKU"] || "";
-            const title = row["Title"] || "";
-            if (sku.includes(`-${searchNum}-`) || sku.includes(`-${cardNumber}-`) || title.includes(`(${searchNum})`)) {
+            const sku = (row["Variant SKU"] || "").toLowerCase();
+            const title = (row["Title"] || "").toLowerCase();
+
+            if (sku.includes(query) || title.includes(query)) {
                 results.push({ index, row });
             }
         });
@@ -76,52 +71,35 @@ class TCGStockEditor {
     updateCardAtIndex(index, finishName, stock) {
         if (index >= this.rows.length) return false;
 
-        const row = this.rows[index];
-        const cardNum = this.extractCardNumber(row);
-        
-        if (cardNum > this.maxProcessedNum) {
-            this.maxProcessedNum = cardNum;
+        const originalRow = this.rows[index];
+        const newRow = JSON.parse(JSON.stringify(originalRow));
+
+        newRow["Variant Inventory Qty"] = stock.toString();
+
+        if (this.config.hasFinishes && finishName) {
+            const finishCode = finishName.toUpperCase().replace(/\s+/g, '-');
+            const handleSuffix = finishName.toLowerCase().replace(/\s+/g, '-');
+
+            if (!newRow["Title"].includes(`(${finishName})`)) {
+                newRow["Title"] = `${newRow["Title"]} (${finishName})`;
+            }
+
+            if (!newRow["Handle"].endsWith(handleSuffix)) {
+                newRow["Handle"] = `${newRow["Handle"]}-${handleSuffix}`;
+            }
+
+            if (newRow["Variant SKU"] && !newRow["Variant SKU"].includes(finishCode)) {
+                newRow["Variant SKU"] = `${newRow["Variant SKU"]}-${finishCode}`;
+            }
+
+            newRow[this.metafieldColumn] = finishName;
         }
 
-        const finishTag = this.config.finishes[finishName] || `finish:${finishName.toLowerCase()}`;
-        const finishCode = finishName.toUpperCase().replace(/\s+/g, '-');
-        const handleSuffix = finishName.toLowerCase().replace(/\s+/g, '-');
-
-        if (!row["Title"].includes(`(${finishName})`)) {
-            row["Title"] = `${row["Title"]} (${finishName})`;
-        }
-
-        if (!row["Handle"].endsWith(handleSuffix)) {
-            row["Handle"] = `${row["Handle"]}-${handleSuffix}`;
-        }
-
-        if (row["Variant SKU"] && !row["Variant SKU"].includes(finishCode)) {
-            row["Variant SKU"] = `${row["Variant SKU"]}-${finishCode}`;
-        }
-
-        row["Variant Inventory Qty"] = stock.toString();
-
-        let rawTags = row["Tags"] || "";
-        let currentTags = rawTags.split(",").map(t => t.trim()).filter(t => t !== "");
-        if (!currentTags.includes(finishTag)) {
-            currentTags.push(finishTag);
-            row["Tags"] = currentTags.join(", ");
-        }
-
+        this.updatedRows.push(newRow);
         return true;
     }
 
     exportCSV() {
-        const exportRows = this.rows.filter(row => {
-            const cardNum = this.extractCardNumber(row);
-            const stock = parseInt(row["Variant Inventory Qty"] || "0", 10);
-
-            if (cardNum <= this.maxProcessedNum && stock === 0) {
-                return false;
-            }
-            return true;
-        });
-
         const escapeCSV = (val) => {
             if (val === undefined || val === null) return '""';
             let str = val.toString().replace(/"/g, '""');
@@ -129,7 +107,8 @@ class TCGStockEditor {
         };
 
         let csvContent = this.headers.map(escapeCSV).join(",") + "\n";
-        exportRows.forEach(row => {
+        
+        this.updatedRows.forEach(row => {
             let rowLine = this.headers.map(h => escapeCSV(row[h] || "")).join(",");
             csvContent += rowLine + "\n";
         });

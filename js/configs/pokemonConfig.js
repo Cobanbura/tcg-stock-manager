@@ -1,10 +1,6 @@
 ﻿const pokemonConfig = {
+    id: "pokemon",
     gameName: "Pokémon TCG",
-    finishes: {
-        "Regular": "finish:regular",
-        "Reverse Holo": "finish:reverse-holo",
-        "Holo": "finish:holo",
-        "First Edition": "finish:first-edition",
-        "Pokeball": "finish:pokeball"
-    }
+    hasFinishes: true,
+    finishes: ["Regular", "Reverse Holo", "Holo", "Pokeball", "Masterball"]
 };
