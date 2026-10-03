@@ -4,7 +4,7 @@ class TCGStockEditor {
         this.rows = [];
         this.updatedRows = [];
         this.headers = [];
-        this.metafieldColumn = "Metafield: custom.yuzey [single_line_text_field]";
+        this.metafieldColumn = "product.metafields.custom.yuzey";
         
         this.parseCSV(csvText);
     }
