@@ -34,13 +34,24 @@
         </div>
     </section>
 
+    <section class="bg-slate-800 p-4 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
+        <div class="min-w-0">
+            <p class="text-sm font-semibold text-slate-200">Mağazadaki mevcut stok <span class="text-xs font-normal text-slate-500">(isteğe bağlı)</span></p>
+            <p id="existing-status" class="text-xs text-amber-400">Yüklenmedi: girilen adetler mağazadaki stoğun ÜZERİNE EKLENMEZ, stoğu EZER.</p>
+        </div>
+        <div class="shrink-0">
+            <input type="file" id="existing-file" accept=".csv" class="hidden">
+            <button id="btn-existing" class="bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold px-3 py-2 rounded transition">Shopify export'unu seç</button>
+        </div>
+    </section>
+
     <section id="entry-console" class="bg-slate-800 p-6 rounded-lg border border-slate-700 space-y-4 opacity-50 pointer-events-none transition-opacity duration-300">
         <h2 class="text-lg font-semibold text-indigo-300 border-b border-slate-700 pb-2">Stok Giriş Konsolu</h2>
 
         <div class="grid grid-cols-3 gap-4">
             <div>
-                <label class="block text-xs font-semibold text-slate-400 mb-1">1. KART NO</label>
-                <input type="text" id="input-card-num" placeholder="Arama yapın..." class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+                <label class="block text-xs font-semibold text-slate-400 mb-1">1. KART NO / ADI</label>
+                <input type="text" id="input-card-num" placeholder="012, asc-012 veya kart adı..." autocomplete="off" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
             </div>
 
             <div id="finish-wrapper">
@@ -55,15 +66,24 @@
             </div>
         </div>
 
+        <p id="status-line" class="text-xs min-h-[1rem] text-slate-400"></p>
+
+        <div id="candidate-list" class="rounded border border-slate-700 bg-slate-900 max-h-64 overflow-y-auto" style="display:none"></div>
+
         <div id="card-preview" class="p-3 bg-slate-900 rounded border border-slate-700 flex items-center justify-between text-sm">
-            <div>
+            <div class="min-w-0">
                 <span id="preview-title" class="font-bold text-slate-200">Kart Bekleniyor...</span>
                 <span id="preview-sku" class="block text-xs font-mono text-slate-400">-</span>
             </div>
-            <button id="btn-save-entry" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded text-xs transition">
+            <button id="btn-save-entry" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded text-xs transition shrink-0">
                 KAYDET & DEVAM ET (Enter)
             </button>
         </div>
+    </section>
+
+    <section id="entries-section" class="bg-slate-800 p-4 rounded-lg border border-slate-700" style="display:none">
+        <h3 class="text-xs font-semibold text-slate-400 mb-2">SON GİRİŞLER</h3>
+        <div id="entries-list" class="max-h-48 overflow-y-auto divide-y divide-slate-700 text-xs font-mono"></div>
     </section>
 
     <section class="flex justify-between items-center bg-slate-800 p-4 rounded-lg border border-slate-700">
@@ -78,17 +98,18 @@
 <script src="./js/configs/pokemonConfig.js"></script>
 <script src="./js/configs/onePieceConfig.js"></script>
 <script src="./js/configs/riftboundConfig.js"></script>
+<script src="./js/configs/yugiohConfig.js"></script>
 <script src="./js/coreEditor.js"></script>
 
 <script>
     const GAME_CONFIGS = {
         pokemon: pokemonConfig,
         onepiece: onePieceConfig,
-        riftbound: riftboundConfig
+        riftbound: riftboundConfig,
+        yugioh: yugiohConfig
     };
 
     let editor = null;
-    let updatedCounter = 0;
     let currentConfig = GAME_CONFIGS.pokemon;
 
     window.addEventListener('dragover', e => e.preventDefault());
@@ -99,17 +120,50 @@
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('csv-file');
         const fileNameDisplay = document.getElementById('file-name-display');
+        const existingBtn = document.getElementById('btn-existing');
+        const existingInput = document.getElementById('existing-file');
+        const existingStatus = document.getElementById('existing-status');
         const entryConsole = document.getElementById('entry-console');
         const cardNumInput = document.getElementById('input-card-num');
         const finishSelect = document.getElementById('select-finish');
         const finishWrapper = document.getElementById('finish-wrapper');
         const qtyLabel = document.getElementById('qty-label');
         const qtyInput = document.getElementById('input-qty');
+        const statusLine = document.getElementById('status-line');
+        const candidateList = document.getElementById('candidate-list');
         const previewTitle = document.getElementById('preview-title');
         const previewSku = document.getElementById('preview-sku');
         const saveBtn = document.getElementById('btn-save-entry');
         const exportBtn = document.getElementById('btn-export');
         const updatedCountText = document.getElementById('updated-count');
+        const entriesSection = document.getElementById('entries-section');
+        const entriesList = document.getElementById('entries-list');
+
+        let candidates = [];      // aramanın sonuçları [{index,row,tier}]
+        let selectedIdx = -1;     // seçili aday (-1: henüz seçilmedi)
+        let existingText = null;  // Shopify export'unun ham metni
+        let existingName = "";
+        let dirty = false;        // indirilmemiş giriş var mı?
+
+        // ---------- yardımcılar ----------
+
+        function setStatus(msg, kind = 'info') {
+            const colors = { ok: 'text-emerald-400', err: 'text-rose-400', warn: 'text-amber-400', info: 'text-slate-400' };
+            statusLine.textContent = msg || "";
+            statusLine.className = 'text-xs min-h-[1rem] ' + (colors[kind] || colors.info);
+        }
+
+        function currentFinish() {
+            return currentConfig.hasFinishes ? finishSelect.value : null;
+        }
+
+        function timestampSuffix() {
+            const d = new Date();
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+        }
+
+        // ---------- oyun seçimi ----------
 
         function initGameSelect() {
             gameSelect.innerHTML = "";
@@ -126,7 +180,7 @@
         function updateGameMode() {
             const selectedKey = gameSelect.value;
             currentConfig = GAME_CONFIGS[selectedKey] || GAME_CONFIGS.pokemon;
-            
+
             if (currentConfig.hasFinishes) {
                 finishWrapper.style.display = "block";
                 qtyLabel.textContent = "3. ADET";
@@ -143,11 +197,15 @@
             }
 
             if (editor) {
-                editor.config = currentConfig;
+                editor.setConfig(currentConfig);
+                renderCandidates();
+                updatePreview();
             }
         }
 
         gameSelect.addEventListener('change', updateGameMode);
+
+        // ---------- ana CSV ----------
 
         dropZone.addEventListener('click', () => fileInput.click());
 
@@ -182,89 +240,342 @@
         });
 
         function handleFileSelect(file) {
-            fileNameDisplay.innerText = `Yüklendi: ${file.name}`;
-            fileNameDisplay.classList.remove('text-slate-500');
-            fileNameDisplay.classList.add('text-emerald-400', 'font-semibold');
-            
+            if (editor && dirty && !confirm("İndirilmemiş stok girişleri var. Yeni CSV yüklerseniz silinecek. Devam edilsin mi?")) {
+                fileInput.value = "";
+                return;
+            }
+
             const reader = new FileReader();
-            reader.onload = function(evt) {
+            reader.onload = function (evt) {
                 try {
-                    const content = evt.target.result;
-                    editor = new TCGStockEditor(content, currentConfig);
-                    
+                    const newEditor = new TCGStockEditor(evt.target.result, currentConfig);
+                    if (!newEditor.headers.includes("Variant SKU") || newEditor.rows.length === 0) {
+                        throw new Error("Bu dosyada 'Variant SKU' sütunu ya da ürün satırı yok. json_to_csv ile üretilen Shopify CSV'sini seçin.");
+                    }
+                    editor = newEditor;
+
+                    fileNameDisplay.innerText = `Yüklendi: ${file.name} (${editor.rows.length} satır)`;
+                    fileNameDisplay.classList.remove('text-slate-500');
+                    fileNameDisplay.classList.add('text-emerald-400', 'font-semibold');
+
+                    // Oyunu CSV'deki "tcg:<slug>" etiketinden otomatik seç
+                    const slug = editor.detectTcgSlug();
+                    const gameKey = slug ? Object.keys(GAME_CONFIGS).find(k => GAME_CONFIGS[k].tcgSlug === slug) : null;
+                    if (gameKey) {
+                        gameSelect.value = gameKey;
+                        updateGameMode();
+                        setStatus(`Oyun CSV etiketlerinden algılandı: ${currentConfig.gameName}`, 'info');
+                    } else {
+                        editor.setConfig(currentConfig);
+                        setStatus(`Oyun CSV'den algılanamadı, seçili oyun kullanılıyor: ${currentConfig.gameName}`, 'warn');
+                    }
+
+                    dirty = false;
+                    candidates = [];
+                    selectedIdx = -1;
+                    cardNumInput.value = "";
+                    applyExisting();
+                    refreshEntries();
+                    renderCandidates();
+                    updatePreview();
+
                     entryConsole.classList.remove('opacity-50', 'pointer-events-none');
                     entryConsole.classList.add('opacity-100');
-                    exportBtn.removeAttribute('disabled');
-                    
                     setTimeout(() => cardNumInput.focus(), 100);
                 } catch (err) {
                     console.error(err);
-                    alert("CSV okuma hatası oluştu.");
+                    alert("CSV okuma hatası: " + err.message);
                 }
             };
             reader.readAsText(file);
+            fileInput.value = "";
         }
 
-        cardNumInput.addEventListener('input', (e) => {
-            if (!editor) return;
-            const cardNum = e.target.value.trim();
-            if (!cardNum) {
+        // ---------- mağazadaki mevcut stok ----------
+
+        existingBtn.addEventListener('click', () => existingInput.click());
+
+        existingInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (evt) {
+                existingText = evt.target.result;
+                existingName = file.name;
+                applyExisting();
+            };
+            reader.readAsText(file);
+            existingInput.value = "";
+        });
+
+        function applyExisting() {
+            if (existingText === null) return;
+            if (!editor) {
+                existingStatus.textContent = `Hazır: ${existingName} (ana CSV yüklenince uygulanacak)`;
+                existingStatus.className = 'text-xs text-slate-300';
+                return;
+            }
+            try {
+                const info = editor.loadExistingInventory(existingText);
+                const overlap = editor.countExistingOverlap();
+                let msg = `Yüklendi: ${existingName} · ${info.count} ürün · stok sütunu: ${info.qtyColumn} · bu CSV ile eşleşen: ${overlap}. ` +
+                    `Eşleşen ürünlerde yalnızca stok değişir (mağazadaki + girilen); diğer ürünler çıktıya girmez.`;
+                let cls = 'text-xs text-emerald-400';
+                if (info.duplicateSkus.length) {
+                    const shown = info.duplicateSkus.slice(0, 3).join(', ') + (info.duplicateSkus.length > 3 ? ' ...' : '');
+                    msg += ` ⚠ Mağazada birden fazla üründe geçen SKU var: ${shown}. Shopify'da düzeltmeniz önerilir.`;
+                    cls = 'text-xs text-amber-400';
+                }
+                existingStatus.textContent = msg;
+                existingStatus.className = cls;
+                refreshEntries();
+                renderCandidates();
+                updatePreview();
+            } catch (err) {
+                existingText = null;
+                existingStatus.textContent = "Okunamadı: " + err.message;
+                existingStatus.className = 'text-xs text-rose-400';
+            }
+        }
+
+        // ---------- arama / aday listesi ----------
+
+        function runSearch() {
+            const q = cardNumInput.value.trim();
+            if (!editor || !q) {
+                candidates = [];
+                selectedIdx = -1;
+            } else {
+                candidates = editor.searchCards(q);
+                // En iyi eşleşmede beraberlik varsa (aynı kodlu farklı entry'ler) sessizce ilkini seçmeyiz
+                const tie = candidates.length > 1 && candidates[0].tier === candidates[1].tier;
+                selectedIdx = candidates.length === 0 ? -1 : (tie ? -1 : 0);
+            }
+            renderCandidates();
+            updatePreview();
+        }
+
+        function moveSelection(delta) {
+            if (!candidates.length) return;
+            if (selectedIdx < 0) selectedIdx = delta > 0 ? 0 : candidates.length - 1;
+            else selectedIdx = (selectedIdx + delta + candidates.length) % candidates.length;
+            renderCandidates();
+            updatePreview();
+        }
+
+        function renderCandidates() {
+            candidateList.innerHTML = "";
+            if (!editor || candidates.length <= 1) {
+                candidateList.style.display = "none";
+                return;
+            }
+            candidateList.style.display = "block";
+            const showThumbs = currentConfig.showThumbnails !== false;
+            const finish = currentFinish();
+
+            candidates.forEach((c, i) => {
+                const d = editor.describeTarget(c.index, finish);
+                const row = document.createElement('div');
+                row.className = 'flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-slate-800 text-sm ' +
+                    (i === selectedIdx ? 'bg-indigo-900/60' : 'hover:bg-slate-800');
+
+                const imgSrc = c.row["Image Src"];
+                if (showThumbs && imgSrc) {
+                    const img = document.createElement('img');
+                    img.src = imgSrc;
+                    img.loading = 'lazy';
+                    img.className = 'w-8 h-11 object-cover rounded bg-slate-800 shrink-0';
+                    img.onerror = () => img.remove();
+                    row.appendChild(img);
+                }
+
+                const info = document.createElement('div');
+                info.className = 'min-w-0 flex-1';
+                const t = document.createElement('div');
+                t.className = 'truncate text-slate-200';
+                t.textContent = d.title;
+                const s = document.createElement('div');
+                s.className = 'text-xs font-mono text-slate-400';
+                let line = d.sku;
+                if (editor.hasExistingInventory()) line += d.existsInStore ? `  ·  Mağazada: ${d.previousStock}` : `  ·  Mağazada yok`;
+                if (d.enteredThisSession > 0) line += `  ·  Bu oturumda: +${d.enteredThisSession}`;
+                if (d.skuConflict) line += `  ·  ⚠ SKU başka üründe var`;
+                s.textContent = line;
+                info.appendChild(t);
+                info.appendChild(s);
+                row.appendChild(info);
+
+                row.addEventListener('click', () => {
+                    selectedIdx = i;
+                    renderCandidates();
+                    updatePreview();
+                    qtyInput.focus();
+                    qtyInput.select();
+                });
+                candidateList.appendChild(row);
+
+                if (i === selectedIdx) row.scrollIntoView({ block: 'nearest' });
+            });
+        }
+
+        function updatePreview() {
+            const q = cardNumInput.value.trim();
+            if (!editor || !q) {
                 previewTitle.innerText = "Kart Bekleniyor...";
                 previewSku.innerText = "-";
                 return;
             }
-
-            const results = editor.findCardByNumber(cardNum);
-            if (results.length > 0) {
-                const matched = results[0].row;
-                previewTitle.innerText = matched["Title"] || "";
-                previewSku.innerText = matched["Variant SKU"] || "";
-            } else {
+            if (!candidates.length) {
                 previewTitle.innerText = "Kart Bulunamadı";
                 previewSku.innerText = "-";
+                return;
             }
+            if (selectedIdx < 0) {
+                previewTitle.innerText = `${candidates.length} eşleşme bulundu`;
+                previewSku.innerText = "↑ / ↓ ile kartı seçin, sonra Enter";
+                return;
+            }
+            const d = editor.describeTarget(candidates[selectedIdx].index, currentFinish());
+            previewTitle.innerText = d.title;
+            let line = d.sku;
+            if (editor.hasExistingInventory()) line += d.existsInStore ? `  ·  Mağazada: ${d.previousStock}` : `  ·  Mağazada yok (yeni ürün)`;
+            if (d.enteredThisSession > 0) line += `  ·  Bu oturumda: +${d.enteredThisSession}`;
+            if (d.skuConflict) line += `  ·  ⚠ SKU başka üründe var`;
+            previewSku.innerText = line;
+        }
+
+        cardNumInput.addEventListener('input', () => {
+            setStatus("");
+            runSearch();
         });
 
-        cardNumInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveEntry(); });
-        qtyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveEntry(); });
+        cardNumInput.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); }
+            else if (e.key === 'Enter') { e.preventDefault(); saveEntry(); }
+            else if (e.key === 'Escape') { cardNumInput.value = ""; setStatus(""); runSearch(); }
+        });
+        qtyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveEntry(); } });
+        finishSelect.addEventListener('change', () => { renderCandidates(); updatePreview(); });
         saveBtn.addEventListener('click', saveEntry);
+
+        // ---------- kaydet ----------
 
         function saveEntry() {
             if (!editor) return;
 
-            const cardNum = cardNumInput.value.trim();
-            const finish = currentConfig.hasFinishes ? finishSelect.value : null;
-            const qty = parseInt(qtyInput.value || "1", 10);
-
-            const results = editor.findCardByNumber(cardNum);
-            if (results.length > 0) {
-                const idx = results[0].index;
-                editor.updateCardAtIndex(idx, finish, qty);
-                
-                updatedCounter++;
-                updatedCountText.innerText = `Giriş Yapılan Kart Sayısı: ${updatedCounter}`;
-
-                cardNumInput.value = "";
-                qtyInput.value = "1";
-                previewTitle.innerText = "Kart Bekleniyor...";
-                previewSku.innerText = "-";
-                cardNumInput.focus();
-            } else {
-                alert("Girdiğiniz arama metnine uygun kart bulunamadı.");
+            if (!cardNumInput.value.trim()) {
+                setStatus("Önce kart numarası veya adı yazın.", 'warn');
+                return;
             }
+            if (!candidates.length) {
+                setStatus("Girdiğiniz arama metnine uygun kart bulunamadı.", 'err');
+                return;
+            }
+            if (selectedIdx < 0) {
+                setStatus("Aynı numaralı birden fazla kart var: ↑ / ↓ ile istediğinizi seçin, sonra Enter.", 'warn');
+                return;
+            }
+            const qty = parseInt(qtyInput.value, 10);
+            if (!Number.isInteger(qty) || qty < 1) {
+                setStatus("Adet en az 1 olmalı.", 'err');
+                qtyInput.focus();
+                return;
+            }
+
+            const idx = candidates[selectedIdx].index;
+            if (!editor.updateCardAtIndex(idx, currentFinish(), qty)) {
+                setStatus("Giriş kaydedilemedi.", 'err');
+                return;
+            }
+
+            const u = editor.lastUpdate;
+            let msg = `✓ ${u.sku}: +${u.addedStock}`;
+            if (editor.hasExistingInventory()) msg += `  (mağazada ${u.previousStock} → ${u.newStock})`;
+            if (u.replacedEarlierEntry) msg += "  · bu karttaki önceki giriş güncellendi";
+            if (u.skuConflict) {
+                msg += `  ⚠ Bu SKU mağazada başka bir üründe de var (${u.skuConflict}); yeni ürün olarak eklenecek.`;
+                setStatus(msg, 'warn');
+            } else {
+                setStatus(msg, 'ok');
+            }
+
+            dirty = true;
+            refreshEntries();
+
+            cardNumInput.value = "";
+            qtyInput.value = "1";
+            candidates = [];
+            selectedIdx = -1;
+            renderCandidates();
+            updatePreview();
+            cardNumInput.focus();
         }
 
+        // ---------- giriş listesi / sayaç ----------
+
+        function refreshEntries() {
+            const list = editor ? editor.getEntries() : [];
+            const totalQty = list.reduce((sum, e) => sum + e.addedStock, 0);
+            updatedCountText.innerText = `Giriş Yapılan Kart Sayısı: ${list.length}` + (list.length ? ` · Toplam adet: ${totalQty}` : "");
+
+            if (list.length === 0) exportBtn.setAttribute('disabled', 'disabled');
+            else exportBtn.removeAttribute('disabled');
+
+            entriesSection.style.display = list.length ? "block" : "none";
+            entriesList.innerHTML = "";
+            list.slice().reverse().forEach(e => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-3 py-1.5';
+
+                const text = document.createElement('span');
+                text.className = 'truncate text-slate-300';
+                let line = `${e.sku}  +${e.addedStock}`;
+                if (editor.hasExistingInventory()) line += `  (${e.previousStock} → ${e.newStock})`;
+                text.textContent = line;
+                text.title = e.title;
+
+                const del = document.createElement('button');
+                del.className = 'text-slate-500 hover:text-rose-400 px-2 shrink-0';
+                del.textContent = '✕ sil';
+                del.addEventListener('click', () => {
+                    editor.removeEntry(e.key);
+                    dirty = true;
+                    setStatus(`Giriş silindi: ${e.sku}`, 'info');
+                    refreshEntries();
+                    renderCandidates();
+                    updatePreview();
+                    cardNumInput.focus();
+                });
+
+                row.appendChild(text);
+                row.appendChild(del);
+                entriesList.appendChild(row);
+            });
+        }
+
+        // ---------- dışa aktar ----------
+
         exportBtn.addEventListener('click', () => {
-            if (!editor) return;
+            if (!editor || editor.entries.size === 0) return;
             const csvData = editor.exportCSV();
             const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
-            
+
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${currentConfig.id}_stock_entries.csv`;
+            a.download = `${currentConfig.id}_stock_entries_${timestampSuffix()}.csv`;
             a.click();
             URL.revokeObjectURL(url);
+            dirty = false;
+        });
+
+        // Sayfa kapatılır / yenilenirse indirilmemiş girişler için tarayıcı uyarısı
+        window.addEventListener('beforeunload', (e) => {
+            if (dirty) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
         });
 
         initGameSelect();
